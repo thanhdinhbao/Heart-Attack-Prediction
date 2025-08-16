@@ -254,7 +254,7 @@ with st.sidebar:
         st.cache_resource.clear(); st.rerun()
     st.divider()
     st.markdown("### 👨‍💻 About")
-    st.write("**Tác giả:** Thanh Dinh  \n**Môn:** Học máy  \n**Email:** your_email@example.com")
+    st.write("**Author:** Group 5  \n**Subject:** Machine Learning  \n**Teacher:** Ths.Pham Viet Anh")
 
 # ===================== TABS =====================
 tab_main, tab_eda, tab_cmp, tab_about = st.tabs([
