@@ -1,0 +1,11 @@
+# Core ML stack (ổn định với scikit-learn 1.2.2)
+numpy==1.26.4
+scipy==1.15.2
+scikit-learn==1.2.2
+joblib
+threadpoolctl
+
+# App
+streamlit
+pandas
+matplotlib
