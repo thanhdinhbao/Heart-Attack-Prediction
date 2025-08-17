@@ -4,7 +4,30 @@ import pandas as pd
 import joblib
 from pathlib import Path
 import matplotlib.pyplot as plt
-import sys
+import sys,os
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load biến môi trường từ file .env
+load_dotenv()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+SYSTEM_PROMPT = """
+Bạn là một trợ lý sức khỏe tim mạch cung cấp thông tin giáo dục, KHÔNG thay thế bác sĩ.
+Giữ an toàn: không chẩn đoán, không kê đơn/đưa liều, không diễn giải ECG/hình ảnh y khoa.
+Nếu có dấu hiệu nguy hiểm (đau ngực dữ dội/lan vai-hàm-tay trái, khó thở nặng, vã mồ hôi lạnh, ngất,
+yếu liệt/nói khó, đau ngực kéo dài >10 phút...), hướng dẫn gọi cấp cứu địa phương ngay.
+
+Phong cách: ngắn gọn, dễ hiểu, có gạch đầu dòng. Nếu câu hỏi rộng -> tóm tắt trước, chi tiết sau.
+Luôn có mục “Bước tiếp theo nên làm” (3–5 ý). Khi thiếu dữ liệu, hỏi tối đa 3 câu: tuổi/giới, triệu chứng & thời gian,
+bệnh nền (tăng huyết áp/đái tháo đường/rối loạn lipid, hút thuốc, béo phì, tiền sử gia đình), số đo gần đây (HA, lipid, đường huyết, BMI).
+
+Khi người dùng cung cấp xác suất/nguy cơ từ mô hình ML: giải thích đó là ước lượng, không phải chẩn đoán;
+khuyến khích khám bác sĩ để đánh giá đầy đủ. Nội dung được phép: giáo dục về nguy cơ, lối sống (DASH/Mediterranean),
+vận động, ngủ, kiểm soát bệnh nền, lịch tầm soát, xét nghiệm cơ bản (lipid, đường huyết, HbA1c, HA, BMI, men tim ở mức tổng quan).
+Trả lời bằng tiếng Việt, thân thiện.
+"""
 
 st.set_page_config(page_title="Heart Risk • ML App", page_icon="❤️", layout="wide")
 
@@ -66,6 +89,27 @@ def predict(model, X, threshold=0.5):
     return y_pred, p1
 
 def nice_percent(x): return f"{x*100:.1f}%"
+
+def gemini_answer(api_key: str, user_message: str, history: list):
+    """
+    history: list các message dạng {"role": "user"|"model", "parts": [text]}
+    Trả về: text của model
+    """
+    if genai is None:
+        return "⚠️ Chưa cài 'google-generativeai'. Hãy chạy: pip install google-generativeai"
+
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=SYSTEM_PROMPT
+        )
+        chat = model.start_chat(history=history)
+        resp = chat.send_message(user_message)
+        return resp.text
+    except Exception as e:
+        return f"⚠️ Lỗi gọi Gemini API: {type(e).__name__}: {e}"
+
 
 # ===================== EDA HELPERS =====================
 def numeric_cols(df: pd.DataFrame):
@@ -255,11 +299,31 @@ with st.sidebar:
     st.divider()
     st.markdown("### 👨‍💻 About")
     st.write("**Author:** Group 5  \n**Subject:** Machine Learning  \n**Teacher:** Ths.Pham Viet Anh")
+    st.divider()
+    st.markdown("### 🔑 Gemini API Key")
 
-# ===================== TABS =====================
-tab_main, tab_eda, tab_cmp, tab_about = st.tabs([
-    "🏠 Trang chính", "📊 Phân tích dữ liệu", "📈 So sánh mô hình", "ℹ️ About"
+    gemini_key = st.text_input(
+        "Dán API key (ẩn)",
+        type="password",
+        value=GEMINI_API_KEY,
+        help="Lấy tại https://makersuite.google.com hoặc https://console.cloud.google.com (Generative Language API)."
+    )
+
+    if st.button("💾 Lưu API Key"):
+        if gemini_key.strip():
+            with open(".env", "w", encoding="utf-8") as f:
+                f.write(f"GEMINI_API_KEY={gemini_key}\n")
+            os.environ["GEMINI_API_KEY"] = gemini_key  # cập nhật runtime
+            st.success("✅ API Key đã được lưu")
+        else:
+            st.warning("⚠️ Bạn chưa nhập API Key!")
+
+
+# ===================== TABS =====================--reload --port
+tab_main, tab_eda, tab_cmp, tab_chat, tab_about = st.tabs([
+    "🏠 Trang chính", "📊 Phân tích dữ liệu", "📈 So sánh mô hình", "🤖 Hỏi đáp AI", "ℹ️ About"
 ])
+
 
 # ===================== TAB 1: TRANG CHÍNH =====================
 with tab_main:
@@ -448,7 +512,68 @@ with tab_cmp:
     else:
         st.info("Hãy tải CSV để thực hiện so sánh mô hình.")
 
-# ===================== TAB 4: ABOUT =====================
+# ===================== TAB 4: HỎI ĐÁP AI =====================
+with tab_chat:
+    st.header("🤖 Hỏi đáp AI về sức khỏe tim mạch (Gemini)")
+
+    st.caption("⚠️ Thông tin chỉ mang tính giáo dục, không thay thế tư vấn/chẩn đoán y khoa. "
+               "Nếu có triệu chứng khẩn cấp → gọi cấp cứu ngay.")
+
+    if not gemini_key:
+        st.warning("Hãy nhập **Gemini API Key** ở sidebar để bắt đầu.")
+        st.stop()
+
+    # Khởi tạo lịch sử hội thoại
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []  # mỗi phần tử: {"role":"user"|"model", "parts":[text]}
+
+    # Quick suggestions
+    with st.expander("💡 Gợi ý câu hỏi nhanh"):
+        cols = st.columns(3)
+        qs = [
+            "Dấu hiệu nhồi máu cơ tim là gì và khi nào cần gọi cấp cứu?",
+            "Chế độ ăn DASH cho người tăng huyết áp gồm những gì?",
+            "Cholesterol bao nhiêu là cao? Tôi nên làm gì để giảm?",
+            "Tập thể dục thế nào là đủ cho sức khỏe tim mạch?",
+            "Tôi có nguy cơ bệnh tim, các xét nghiệm nào thường được làm?"
+        ]
+        for i, q in enumerate(qs):
+            if cols[i % 3].button(q):
+                st.session_state.setdefault("pending_question", q)
+
+    # Hộp nhập tin nhắn
+    default_q = st.session_state.pop("pending_question", "")
+    user_msg = st.text_area("Nhập câu hỏi của bạn", value=default_q, height=100, placeholder="Ví dụ: Tôi hay tức ngực khi leo cầu thang, có đáng lo không?")
+    col_send1, col_send2 = st.columns([1,1])
+    with col_send1:
+        send = st.button("Gửi câu hỏi")
+    with col_send2:
+        clear = st.button("Xoá hội thoại")
+
+    if clear:
+        st.session_state.chat_history = []
+        st.success("Đã xoá lịch sử hội thoại.")
+
+    # Hiển thị lịch sử hội thoại
+    if st.session_state.chat_history:
+        st.markdown("---")
+        st.subheader("🗂️ Lịch sử hội thoại")
+        for turn in st.session_state.chat_history:
+            role = "👤 Bạn" if turn["role"] == "user" else "🤖 Trợ lý"
+            st.markdown(f"**{role}:**\n\n{turn['parts'][0]}")
+        st.markdown("---")
+
+    if send and user_msg.strip():
+        # Đẩy user message vào lịch sử, gọi Gemini, hiển thị phản hồi
+        st.session_state.chat_history.append({"role": "user", "parts": [user_msg]})
+        with st.spinner("Đang nghĩ..."):
+            reply = gemini_answer(gemini_key, user_msg, st.session_state.chat_history)
+        st.session_state.chat_history.append({"role": "model", "parts": [reply]})
+        st.rerun()
+
+    st.caption("Mẹo: Hãy cho biết tuổi/giới, triệu chứng, bệnh nền và số đo gần đây (HA, lipid, đường huyết, BMI) để gợi ý sát hơn.")
+
+# ===================== TAB 5: ABOUT =====================
 with tab_about:
     st.header("ℹ️ About")
     st.write("""

@@ -9,4 +9,8 @@ threadpoolctl
 streamlit
 pandas
 matplotlib
-fastapi==0.115.0 
+fastapi==0.115.0
+uvicorn==0.25.0
+# AI
+google-generativeai
+python-dotenv
